@@ -2,73 +2,95 @@ package com.example.demo.service;
 
 import com.example.demo.model.Part;
 import com.example.demo.model.PartRequest;
+import com.example.demo.model.PartResponseDTO;
 import com.example.demo.model.RequestStatus;
 import com.example.demo.repository.PartRepository;
 import com.example.demo.repository.PartRequestRepository;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import lombok.RequiredArgsConstructor;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
-@RequiredArgsConstructor // Constructor'ı otomatik üreterek Dependency Injection sağlar
 public class PartRequestService {
 
-    private final PartRequestRepository requestRepository;
-    private final PartRepository partRepository;
+    private final PartRequestRepository partRequestRepository;
+    private final PartRepository partRepository; // Ana depoya bağlanmak için ekledik
 
-    // Personelin parça isteği oluşturmasını sağlar
+    // Constructor'a PartRepository'yi de dahil ettik
+    public PartRequestService(PartRequestRepository partRequestRepository, PartRepository partRepository) {
+        this.partRequestRepository = partRequestRepository;
+        this.partRepository = partRepository;
+    }
+
     public PartRequest createRequest(PartRequest request) {
-        partRepository.findById(request.getPartId())
-                .orElseThrow(() -> new RuntimeException("Sistemde böyle bir parça kayıtlı değil!"));
-
-        request.setStatus(RequestStatus.PENDING);
-        return requestRepository.save(request);
+        request.setRejectionReason(null);
+        return partRequestRepository.save(request);
     }
 
-    // Yapılan tüm istekleri listeler
-    public List<PartRequest> getAllRequests() {
-        return requestRepository.findAll();
+    public List<PartResponseDTO> getAllRequests() {
+        List<PartRequest> requests = partRequestRepository.findAll();
+        List<PartResponseDTO> dtoList = new ArrayList<>();
+
+        for (PartRequest r : requests) {
+            PartResponseDTO dto = new PartResponseDTO();
+
+            dto.setId(r.getId());
+            dto.setQuantity(r.getRequestedQuantity());
+            dto.setStatus(r.getStatus());
+            dto.setRequesterName(r.getRequesterName());
+
+            if (r.getStatus() == RequestStatus.REJECTED) {
+                dto.setRejectionReason(r.getRejectionReason());
+            } else {
+                dto.setRejectionReason("-");
+            }
+
+            if (r.getCreatedAt() != null) {
+                dto.setCreatedAt(r.getCreatedAt());
+            } else {
+                dto.setCreatedAt(LocalDateTime.now());
+            }
+
+            if (r.getUpdatedAt() != null) {
+                dto.setUpdatedAt(r.getUpdatedAt());
+            } else {
+                dto.setUpdatedAt(LocalDateTime.now());
+            }
+
+            // AKILLI EŞLEŞTİRME: partId'yi kullanarak ana depodan parçanın adını ve kodunu buluyoruz
+            Part part = partRepository.findById(r.getPartId()).orElse(null);
+            if (part != null) {
+                dto.setPartName(part.getPartName());
+                dto.setPartCode(part.getPartCode());
+                dto.setLocation(part.getLocation());
+            } else {
+                // Eğer parça depodan silinmişse patlamaması için varsayılan değer
+                dto.setPartName("Bilinmeyen Parça");
+                dto.setPartCode("-");
+                dto.setLocation("-");
+            }
+
+            dtoList.add(dto);
+        }
+        return dtoList;
     }
 
-    // İsteği onaylar ve otomatik olarak stoktan düşer
-    @Transactional
-    public PartRequest approveRequest(Long requestId) {
-        PartRequest request = requestRepository.findById(requestId)
+    public PartRequest approveRequest(Long id) {
+        PartRequest request = partRequestRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("İstek bulunamadı!"));
-
-        if (request.getStatus() != RequestStatus.PENDING) {
-            throw new RuntimeException("Bu istek daha önce zaten sonuçlandırılmış!");
-        }
-
-        Part part = partRepository.findById(request.getPartId())
-                .orElseThrow(() -> new RuntimeException("İlgili parça stokta bulunamadı!"));
-
-        // Stok yeterli mi kontrolü
-        if (part.getQuantity() < request.getRequestedQuantity()) {
-            throw new RuntimeException("Yetersiz stok! Depodaki mevcut miktar: " + part.getQuantity());
-        }
-
-        // Stoktan düşme işlemi
-        part.setQuantity(part.getQuantity() - request.getRequestedQuantity());
-        partRepository.save(part);
-
-        // İsteği onaylandıya çekme
         request.setStatus(RequestStatus.APPROVED);
-        return requestRepository.save(request);
+        request.setRejectionReason(null);
+        request.setUpdatedAt(LocalDateTime.now());
+        return partRequestRepository.save(request);
     }
 
-    // İsteği gerekçe ile reddeder
-    public PartRequest rejectRequest(Long requestId, String reason) {
-        PartRequest request = requestRepository.findById(requestId)
+    public PartRequest rejectRequest(Long id, String reason) {
+        PartRequest request = partRequestRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("İstek bulunamadı!"));
-
-        if (request.getStatus() != RequestStatus.PENDING) {
-            throw new RuntimeException("Bu istek daha önce zaten sonuçlandırılmış!");
-        }
-
         request.setStatus(RequestStatus.REJECTED);
         request.setRejectionReason(reason);
-        return requestRepository.save(request);
+        request.setUpdatedAt(LocalDateTime.now());
+        return partRequestRepository.save(request);
     }
 }
